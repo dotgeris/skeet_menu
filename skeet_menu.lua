@@ -605,8 +605,14 @@ local function CreatePlayerESP(player)
             local o = ESPObjects[player]
             for _, obj in pairs(o) do
                 if typeof(obj) == "table" then
-                    for _, sub in pairs(obj) do if sub.Remove then sub:Remove() end end
-                elseif obj.Remove then
+                    for _, sub in pairs(obj) do
+                        if typeof(sub) == "table" and sub[1] and sub[1].Remove then
+                            sub[1]:Remove()
+                        elseif typeof(sub) == "userdata" and sub.Remove then
+                            sub:Remove()
+                        end
+                    end
+                elseif typeof(obj) == "userdata" and obj.Remove then
                     obj:Remove()
                 end
             end
