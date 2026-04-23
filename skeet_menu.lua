@@ -620,6 +620,7 @@ local function CreatePlayerESP(player)
             Weapon = Drawing.new("Text"),
             HealthBarBG = Drawing.new("Square"),
             HealthBar = Drawing.new("Square"),
+            HealthNum = Drawing.new("Text"),
             Skeleton = {}
         }
         
@@ -658,6 +659,12 @@ local function CreatePlayerESP(player)
         objects.HealthBar.Transparency = 1
         objects.HealthBar.Filled = true
         objects.HealthBar.Visible = false
+
+        objects.HealthNum.Size = 13
+        objects.HealthNum.Center = true
+        objects.HealthNum.Outline = true
+        objects.HealthNum.Color = Color3.new(1,1,1)
+        objects.HealthNum.Visible = false
         
         local connections = {
             {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
@@ -752,23 +759,47 @@ table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
                     if Settings.Visuals.HealthBar and hum and hum.Health > 0 then
                         local hp = math.clamp(hum.Health, 0, hum.MaxHealth)
                         local hpPercent = hp / hum.MaxHealth
+                        local barPos = position.X - 6
+                        
                         objects.HealthBarBG.Visible = true
-                        objects.HealthBarBG.Size = Vector2.new(2, height)
-                        objects.HealthBarBG.Position = Vector2.new(position.X - 5, position.Y)
+                        objects.HealthBarBG.Size = Vector2.new(4, height + 2)
+                        objects.HealthBarBG.Position = Vector2.new(barPos - 1, position.Y - 1)
+                        
                         objects.HealthBar.Visible = true
                         objects.HealthBar.Size = Vector2.new(2, height * hpPercent)
-                        objects.HealthBar.Position = Vector2.new(position.X - 5, position.Y + (height * (1 - hpPercent)))
+                        objects.HealthBar.Position = Vector2.new(barPos, position.Y + (height * (1 - hpPercent)))
                         objects.HealthBar.Color = Color3.fromHSV(hpPercent * 0.3, 1, 1)
+                        
+                        if hp < hum.MaxHealth then
+                            objects.HealthNum.Visible = true
+                            objects.HealthNum.Text = tostring(math.floor(hp))
+                            objects.HealthNum.Position = Vector2.new(barPos - 1, position.Y + (height * (1 - hpPercent)) - 7)
+                        else
+                            objects.HealthNum.Visible = false
+                        end
                     else
                         objects.HealthBarBG.Visible = false
                         objects.HealthBar.Visible = false
+                        objects.HealthNum.Visible = false
                     end
 
                     -- Weapon ESP
                     if Settings.Visuals.WeaponESP then
+                        local weaponName = "none"
                         local tool = char:FindFirstChildOfClass("Tool")
+                        if tool then 
+                            weaponName = tool.Name 
+                        else
+                            -- Fallback for custom weapon models
+                            for _, v in pairs(char:GetChildren()) do
+                                if v:IsA("Model") and (v.Name:lower():find("gun") or v.Name:lower():find("weapon") or v.Name:lower():find("knife")) then
+                                    weaponName = v.Name
+                                    break
+                                end
+                            end
+                        end
                         objects.Weapon.Visible = true
-                        objects.Weapon.Text = tool and tool.Name:lower() or "none"
+                        objects.Weapon.Text = weaponName:lower()
                         objects.Weapon.Position = Vector2.new(position.X + width/2, position.Y + height + 5)
                     else
                         objects.Weapon.Visible = false
