@@ -598,15 +598,18 @@ local function GetConfigs()
     return configs
 end
 
--- ESP Logic
+-- ESP Logic (Optimized Rewrite)
 local function CreatePlayerESP(player)
     local function remove()
         if ESPObjects[player] then
             local o = ESPObjects[player]
-            if o.Box then o.Box:Remove() end
-            if o.BoxOutline then o.BoxOutline:Remove() end
-            if o.Name then o.Name:Remove() end
-            for _, l in pairs(o.Skeleton) do if l[1] then l[1]:Remove() end end
+            for _, obj in pairs(o) do
+                if typeof(obj) == "table" then
+                    for _, sub in pairs(obj) do if sub.Remove then sub:Remove() end end
+                elseif obj.Remove then
+                    obj:Remove()
+                end
+            end
             ESPObjects[player] = nil
         end
     end
@@ -614,28 +617,25 @@ local function CreatePlayerESP(player)
     local function create()
         remove()
         local objects = {
-            BoxOutline = Drawing.new("Square"),
-            Box = Drawing.new("Square"),
+            Corners = {},
             Name = Drawing.new("Text"),
             Weapon = Drawing.new("Text"),
             HealthBarBG = Drawing.new("Square"),
             HealthBar = Drawing.new("Square"),
             HealthNum = Drawing.new("Text"),
-            Skeleton = {}
+            Skeleton = {},
+            Joints = {}
         }
         
-        objects.BoxOutline.Thickness = 3
-        objects.BoxOutline.Color = Color3.new(0,0,0)
-        objects.BoxOutline.Transparency = 1
-        objects.BoxOutline.Filled = false
-        objects.BoxOutline.Visible = false
-        
-        objects.Box.Thickness = 1
-        objects.Box.Color = Settings.Visuals.Color
-        objects.Box.Transparency = 1
-        objects.Box.Filled = false
-        objects.Box.Visible = false
-        
+        -- Corner Lines (8 lines for 4 corners)
+        for i = 1, 8 do
+            local l = Drawing.new("Line")
+            l.Thickness = 1
+            l.Color = Settings.Visuals.Color
+            l.Visible = false
+            table.insert(objects.Corners, l)
+        end
+
         objects.Name.Size = 14
         objects.Name.Center = true
         objects.Name.Outline = true
@@ -650,13 +650,10 @@ local function CreatePlayerESP(player)
 
         objects.HealthBarBG.Thickness = 1
         objects.HealthBarBG.Color = Color3.new(0,0,0)
-        objects.HealthBarBG.Transparency = 1
         objects.HealthBarBG.Filled = true
         objects.HealthBarBG.Visible = false
 
         objects.HealthBar.Thickness = 1
-        objects.HealthBar.Color = Color3.new(0,1,0)
-        objects.HealthBar.Transparency = 1
         objects.HealthBar.Filled = true
         objects.HealthBar.Visible = false
 
@@ -666,7 +663,7 @@ local function CreatePlayerESP(player)
         objects.HealthNum.Color = Color3.new(1,1,1)
         objects.HealthNum.Visible = false
         
-        local connections = {
+        local bones = {
             {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
             {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"},
             {"UpperTorso", "RightUpperArm"}, {"RightUpperArm", "RightLowerArm"},
@@ -674,13 +671,22 @@ local function CreatePlayerESP(player)
             {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}
         }
         
-        for _, pair in pairs(connections) do
+        for _, pair in pairs(bones) do
             local line = Drawing.new("Line")
             line.Thickness = 1
-            line.Color = Settings.Visuals.Color
-            line.Transparency = 1
+            line.Color = Color3.new(1,1,1)
             line.Visible = false
             table.insert(objects.Skeleton, {line, pair[1], pair[2]})
+        end
+
+        local joint_parts = {"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm", "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg"}
+        for _, p in pairs(joint_parts) do
+            local circ = Drawing.new("Circle")
+            circ.Radius = 2
+            circ.Filled = true
+            circ.Color = Color3.new(1,1,1)
+            circ.Visible = false
+            table.insert(objects.Joints, {circ, p})
         end
         
         ESPObjects[player] = objects
@@ -716,133 +722,108 @@ table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
         if char and player ~= LocalPlayer then
             local isTeammate = player.Team and myTeam and player.Team == myTeam
             local isVisible = not (Settings.Visuals.TeamCheck and isTeammate)
-            
+            local hum = char:FindFirstChildOfClass("Humanoid")
             local head = GetCharacterPart(player, "Head")
             local root = GetCharacterPart(player, "HumanoidRootPart")
-            local hum = char:FindFirstChildOfClass("Humanoid")
             
-            -- Spectate Fix: Hide ESP for the person being spectated
-            local spectating = (Camera.CameraSubject and Camera.CameraSubject:IsDescendantOf(char))
+            local function hideAll()
+                for _, obj in pairs(objects) do
+                    if typeof(obj) == "table" then
+                        for _, sub in pairs(obj) do 
+                            if typeof(sub) == "table" then sub[1].Visible = false else sub.Visible = false end 
+                        end
+                    elseif obj.Visible ~= nil then obj.Visible = false end
+                end
+            end
 
-            if head and root and isVisible and not spectating then
+            if head and root and hum and isVisible and hum.Health > 0 then
                 local headPos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
                 local footPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
-                
-                local function hideAll()
-                    objects.Box.Visible = false
-                    objects.BoxOutline.Visible = false
-                    objects.Name.Visible = false
-                    objects.Weapon.Visible = false
-                    objects.HealthBarBG.Visible = false
-                    objects.HealthBar.Visible = false
-                    for _, d in pairs(objects.Skeleton) do d[1].Visible = false end
-                end
+                local spectating = (Camera.CameraSubject and Camera.CameraSubject:IsDescendantOf(char))
 
-                if onScreen then
+                if onScreen and not spectating then
                     local height = math.abs(headPos.Y - footPos.Y)
                     local width = height / 2
-                    local size = Vector2.new(width, height)
                     local position = Vector2.new(headPos.X - width/2, headPos.Y)
                     
-                    -- Box & Name
-                    objects.Box.Visible = Settings.Visuals.BoxESP
-                    objects.Box.Size = size
-                    objects.Box.Position = position
-                    objects.BoxOutline.Visible = Settings.Visuals.BoxESP
-                    objects.BoxOutline.Size = size
-                    objects.BoxOutline.Position = position
+                    -- Corners
+                    if Settings.Visuals.BoxESP then
+                        local l = height/4
+                        local c = objects.Corners
+                        -- Top Left
+                        c[1].Visible, c[1].From, c[1].To = true, position, position + Vector2.new(l, 0)
+                        c[2].Visible, c[2].From, c[2].To = true, position, position + Vector2.new(0, l)
+                        -- Top Right
+                        c[3].Visible, c[3].From, c[3].To = true, position + Vector2.new(width, 0), position + Vector2.new(width - l, 0)
+                        c[4].Visible, c[4].From, c[4].To = true, position + Vector2.new(width, 0), position + Vector2.new(width, l)
+                        -- Bottom Left
+                        c[5].Visible, c[5].From, c[5].To = true, position + Vector2.new(0, height), position + Vector2.new(l, height)
+                        c[6].Visible, c[6].From, c[6].To = true, position + Vector2.new(0, height), position + Vector2.new(0, height - l)
+                        -- Bottom Right
+                        c[7].Visible, c[7].From, c[7].To = true, position + Vector2.new(width, height), position + Vector2.new(width - l, height)
+                        c[8].Visible, c[8].From, c[8].To = true, position + Vector2.new(width, height), position + Vector2.new(width, height - l)
+                        for i=1,8 do c[i].Color = Settings.Visuals.Color end
+                    else
+                        for i=1,8 do objects.Corners[i].Visible = false end
+                    end
+
+                    -- Name
                     objects.Name.Visible = Settings.Visuals.BoxESP
                     objects.Name.Text = player.Name:lower()
                     objects.Name.Position = Vector2.new(position.X + width/2, position.Y - 15)
                     
-                    -- Health Bar
-                    if Settings.Visuals.HealthBar and hum and hum.Health > 0 then
+                    -- Health
+                    if Settings.Visuals.HealthBar then
                         local hp = math.clamp(hum.Health, 0, hum.MaxHealth)
                         local hpPercent = hp / hum.MaxHealth
                         local barPos = position.X - 6
-                        
                         objects.HealthBarBG.Visible = true
                         objects.HealthBarBG.Size = Vector2.new(4, height + 2)
                         objects.HealthBarBG.Position = Vector2.new(barPos - 1, position.Y - 1)
-                        
                         objects.HealthBar.Visible = true
                         objects.HealthBar.Size = Vector2.new(2, height * hpPercent)
                         objects.HealthBar.Position = Vector2.new(barPos, position.Y + (height * (1 - hpPercent)))
                         objects.HealthBar.Color = Color3.fromHSV(hpPercent * 0.3, 1, 1)
-                        
                         if hp < hum.MaxHealth then
                             objects.HealthNum.Visible = true
                             objects.HealthNum.Text = tostring(math.floor(hp))
                             objects.HealthNum.Position = Vector2.new(barPos - 1, position.Y + (height * (1 - hpPercent)) - 7)
-                        else
-                            objects.HealthNum.Visible = false
-                        end
+                        else objects.HealthNum.Visible = false end
                     else
-                        objects.HealthBarBG.Visible = false
-                        objects.HealthBar.Visible = false
-                        objects.HealthNum.Visible = false
+                        objects.HealthBarBG.Visible, objects.HealthBar.Visible, objects.HealthNum.Visible = false, false, false
                     end
 
-                    -- Weapon ESP
+                    -- Weapon
                     if Settings.Visuals.WeaponESP then
-                        local weaponName = "none"
                         local tool = char:FindFirstChildOfClass("Tool")
-                        if tool then 
-                            weaponName = tool.Name 
-                        else
-                            -- Fallback for custom weapon models
-                            for _, v in pairs(char:GetChildren()) do
-                                if v:IsA("Model") and (v.Name:lower():find("gun") or v.Name:lower():find("weapon") or v.Name:lower():find("knife")) then
-                                    weaponName = v.Name
-                                    break
-                                end
-                            end
-                        end
+                        local weapon = tool and tool.Name or "none"
                         objects.Weapon.Visible = true
-                        objects.Weapon.Text = weaponName:lower()
+                        objects.Weapon.Text = weapon:lower()
                         objects.Weapon.Position = Vector2.new(position.X + width/2, position.Y + height + 5)
-                    else
-                        objects.Weapon.Visible = false
-                    end
+                    else objects.Weapon.Visible = false end
 
-                    -- Skeleton (existing logic)
+                    -- Skeleton & Joints
                     if Settings.Visuals.SkeletonESP then
                         for _, data in pairs(objects.Skeleton) do
-                            local line, p1_name, p2_name = data[1], data[2], data[3]
-                            local p1, p2 = GetCharacterPart(player, p1_name), GetCharacterPart(player, p2_name)
+                            local p1, p2 = GetCharacterPart(player, data[2]), GetCharacterPart(player, data[3])
                             if p1 and p2 then
                                 local v1, os1 = Camera:WorldToViewportPoint(p1.Position)
                                 local v2, os2 = Camera:WorldToViewportPoint(p2.Position)
                                 if os1 and os2 then
-                                    line.Visible = true
-                                    line.From = Vector2.new(v1.X, v1.Y)
-                                    line.To = Vector2.new(v2.X, v2.Y)
-                                    line.Color = Settings.Visuals.Color
-                                else line.Visible = false end
-                            else line.Visible = false end
+                                    data[1].Visible, data[1].From, data[1].To = true, Vector2.new(v1.X, v1.Y), Vector2.new(v2.X, v2.Y)
+                                else data[1].Visible = false end
+                            else data[1].Visible = false end
+                        end
+                        for _, j in pairs(objects.Joints) do
+                            local p = GetCharacterPart(player, j[2])
+                            if p then
+                                local v, os = Camera:WorldToViewportPoint(p.Position)
+                                if os then j[1].Visible, j[1].Position = true, Vector2.new(v.X, v.Y)
+                                else j[1].Visible = false end
+                            else j[1].Visible = false end
                         end
                     else
                         for _, d in pairs(objects.Skeleton) do d[1].Visible = false end
-                    end
-                else
-                    hideAll()
-                end
-            else
-                -- Robust Cleanup for invisible/spectated players
-                if objects.Box then objects.Box.Visible = false end
-                if objects.BoxOutline then objects.BoxOutline.Visible = false end
-                if objects.Name then objects.Name.Visible = false end
-                if objects.Weapon then objects.Weapon.Visible = false end
-                if objects.HealthBarBG then objects.HealthBarBG.Visible = false end
-                if objects.HealthBar then objects.HealthBar.Visible = false end
-                if objects.Skeleton then for _, d in pairs(objects.Skeleton) do d[1].Visible = false end end
-            end
-
-            -- Target Detection
-            local head = GetCharacterPart(player, "Head")
-            if head then
-                local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
-                if onScreen then
                     local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
                     
                     -- Legit Aimbot Target
