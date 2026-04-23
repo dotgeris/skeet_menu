@@ -111,79 +111,101 @@ end
 local function GetCharacterPart(player, partName)
     local char = player.Character
     if not char then return nil end
-    local cacheKey = player.Name .. "_" .. (partName or "Head")
-    if PartCache[cacheKey] and PartCache[cacheKey].Parent == char then return PartCache[cacheKey] end
+    
+    if not PartCache[char] then PartCache[char] = {} end
+    if PartCache[char][partName] and PartCache[char][partName].Parent == char then
+        return PartCache[char][partName]
+    end
+    
     local part = char:FindFirstChild(partName)
     if not part then
-        for _, v in pairs(char:GetDescendants()) do
-            if v:IsA("BasePart") and v.Name == partName then part = v break end
+        for _, v in pairs(char:GetChildren()) do
+            if v:IsA("BasePart") and v.Name:find(partName) then part = v break end
         end
     end
-    PartCache[cacheKey] = part
+    
+    PartCache[char][partName] = part
     return part
 end
 
 function Library:Unload()
-    for _, conn in pairs(self.Connections) do conn:Disconnect() end
-    for _, objects in pairs(ESPObjects) do
-        if objects.Box then objects.Box:Remove() end
-        if objects.BoxOutline then objects.BoxOutline:Remove() end
-        if objects.Name then objects.Name:Remove() end
-        if objects.Weapon then objects.Weapon:Remove() end
-        if objects.HealthBarBG then objects.HealthBarBG:Remove() end
-        if objects.HealthBar then objects.HealthBar:Remove() end
-        for _, l in pairs(objects.Skeleton) do if l[1] then l[1]:Remove() end end
+    for _, conn in pairs(self.Connections) do pcall(function() conn:Disconnect() end) end
+    for p, instance in pairs(ESPObjects) do
+        pcall(function()
+            if instance.Destroy then instance:Destroy()
+            elseif typeof(instance) == "table" then
+                for _, obj in pairs(instance) do
+                    if typeof(obj) == "userdata" and obj.Remove then obj:Remove() end
+                end
+            end
+        end)
     end
     if self.MainGui then self.MainGui:Destroy() end
     if self.Watermark then self.Watermark:Destroy() end
-    if ESPFolder then ESPFolder:Destroy() end
-    AimbotCircle:Remove()
-    SilentCircle:Remove()
+    if ESPFolder then pcall(function() ESPFolder:Destroy() end) end
+    pcall(function() AimbotCircle:Remove() end)
+    pcall(function() SilentCircle:Remove() end)
+    table.clear(ESPObjects)
 end
 
--- Silent Aim & Mouse Redirection (DISABLED FOR MAINTENANCE)
---[[
+-- Silent Aim Hook
+local function GetSilentTarget()
+    local target = nil
+    local shortestDist = Settings.Rage.FOV
+    local mousePos = UserInputService:GetMouseLocation()
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer then
+            local char = player.Character
+            local head = char and char:FindFirstChild("Head")
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if head and hum and hum.Health > 0 then
+                local isTeammate = player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team
+                if not (Settings.Rage.TeamCheck and isTeammate) then
+                    local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                    if onScreen then
+                        local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+                        if dist < shortestDist then
+                            target = head
+                            shortestDist = dist
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return target
+end
+
 local hook = (hookmetamethod or (getgenv and getgenv().hookmetamethod))
 if hook then
     local oldNamecall
     oldNamecall = hook(game, "__namecall", function(self, ...)
         local method = getnamecallmethod()
         local args = {...}
-        if not checkcaller() and Settings.Rage.SilentAim and SilentTarget then
-            if method == "Raycast" then
-                local origin = args[1]
-                local direction = (SilentTarget.Position - origin).Unit * 1000
-                args[2] = direction
-                return oldNamecall(self, unpack(args))
-            elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" or method == "FindPartOnRayWithWhitelist" then
-                local ray = args[1]
-                args[1] = Ray.new(ray.Origin, (SilentTarget.Position - ray.Origin).Unit * 1000)
-                return oldNamecall(self, unpack(args))
-            elseif method == "FireServer" and (tostring(self):lower():find("shoot") or tostring(self):lower():find("fire")) then
-                -- Redirection for common remote-based shooting
-                for i, arg in pairs(args) do
-                    if typeof(arg) == "Vector3" then
-                        args[i] = SilentTarget.Position
+        if not checkcaller() and Settings.Rage.SilentAim then
+            local target = GetSilentTarget()
+            if target then
+                if method == "Raycast" then
+                    local origin = args[1]
+                    args[2] = (target.Position - origin).Unit * 1000
+                    return oldNamecall(self, unpack(args))
+                elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" then
+                    local ray = args[1]
+                    args[1] = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 1000)
+                    return oldNamecall(self, unpack(args))
+                elseif method == "FireServer" and (tostring(self):lower():find("shoot") or tostring(self):lower():find("fire")) then
+                    for i, arg in pairs(args) do
+                        if typeof(arg) == "Vector3" then args[i] = target.Position
+                        elseif typeof(arg) == "CFrame" then args[i] = target.CFrame end
                     end
+                    return oldNamecall(self, unpack(args))
                 end
-                return oldNamecall(self, unpack(args))
             end
         end
         return oldNamecall(self, ...)
     end)
-
-    local oldIndex
-    oldIndex = hook(game, "__index", function(self, index)
-        if not checkcaller() and Settings.Rage.SilentAim and SilentTarget then
-            if self:IsA("Mouse") then
-                if index == "Hit" then return SilentTarget.CFrame
-                elseif index == "Target" then return SilentTarget end
-            end
-        end
-        return oldIndex(self, index)
-    end)
 end
-]]
 
 function Library:CreateWindow(title)
     local ScreenGui = Instance.new("ScreenGui")
@@ -598,77 +620,36 @@ local function GetConfigs()
     return configs
 end
 
--- ESP Logic (Optimized Rewrite)
-local function CreatePlayerESP(player)
-    local function remove()
-        if ESPObjects[player] then
-            local o = ESPObjects[player]
-            for _, obj in pairs(o) do
-                if typeof(obj) == "table" then
-                    for _, sub in pairs(obj) do
-                        if typeof(sub) == "table" and sub[1] and sub[1].Remove then
-                            sub[1]:Remove()
-                        elseif typeof(sub) == "userdata" and sub.Remove then
-                            sub:Remove()
-                        end
-                    end
-                elseif typeof(obj) == "userdata" and obj.Remove then
-                    obj:Remove()
-                end
-            end
-            ESPObjects[player] = nil
-        end
-    end
+-- High-Performance Liquid ESP System
+local ESPRenderer = {
+    Cache = {},
+    Interpolation = 0.8 -- Faster liquid factor
+}
 
-    local function create()
-        remove()
-        local objects = {
-            Corners = {},
+function ESPRenderer.Get(player)
+    if not ESPRenderer.Cache[player] then
+        local o = {
+            Box = Drawing.new("Square"),
+            BoxOutline = Drawing.new("Square"),
             Name = Drawing.new("Text"),
-            Weapon = Drawing.new("Text"),
-            HealthBarBG = Drawing.new("Square"),
+            HealthBG = Drawing.new("Square"),
             HealthBar = Drawing.new("Square"),
             HealthNum = Drawing.new("Text"),
+            Weapon = Drawing.new("Text"),
             Skeleton = {},
-            Joints = {}
+            LastPos = Vector2.new(0, 0),
+            LastSize = Vector2.new(0, 0)
         }
         
-        -- Corner Lines (8 lines for 4 corners)
-        for i = 1, 8 do
-            local l = Drawing.new("Line")
-            l.Thickness = 1
-            l.Color = Settings.Visuals.Color
-            l.Visible = false
-            table.insert(objects.Corners, l)
-        end
+        o.Box.Thickness = 1
+        o.BoxOutline.Thickness = 3
+        o.BoxOutline.Color = Color3.new(0,0,0)
+        o.Name.Size, o.Name.Center, o.Name.Outline, o.Name.Font = 13, true, true, 2
+        o.Weapon.Size, o.Weapon.Center, o.Weapon.Outline, o.Weapon.Font = 13, true, true, 2
+        o.HealthBG.Color, o.HealthBG.Filled = Color3.new(0,0,0), true
+        o.HealthBar.Filled = true
+        o.HealthNum.Size, o.HealthNum.Outline, o.HealthNum.Font = 13, true, 2
 
-        objects.Name.Size = 14
-        objects.Name.Center = true
-        objects.Name.Outline = true
-        objects.Name.Color = Color3.new(1,1,1)
-        objects.Name.Visible = false
-
-        objects.Weapon.Size = 13
-        objects.Weapon.Center = true
-        objects.Weapon.Outline = true
-        objects.Weapon.Color = Color3.new(1,1,1)
-        objects.Weapon.Visible = false
-
-        objects.HealthBarBG.Thickness = 1
-        objects.HealthBarBG.Color = Color3.new(0,0,0)
-        objects.HealthBarBG.Filled = true
-        objects.HealthBarBG.Visible = false
-
-        objects.HealthBar.Thickness = 1
-        objects.HealthBar.Filled = true
-        objects.HealthBar.Visible = false
-
-        objects.HealthNum.Size = 13
-        objects.HealthNum.Center = true
-        objects.HealthNum.Outline = true
-        objects.HealthNum.Color = Color3.new(1,1,1)
-        objects.HealthNum.Visible = false
-        
         local bones = {
             {"Head", "UpperTorso"}, {"UpperTorso", "LowerTorso"},
             {"UpperTorso", "LeftUpperArm"}, {"LeftUpperArm", "LeftLowerArm"},
@@ -676,198 +657,163 @@ local function CreatePlayerESP(player)
             {"LowerTorso", "LeftUpperLeg"}, {"LeftUpperLeg", "LeftLowerLeg"},
             {"LowerTorso", "RightUpperLeg"}, {"RightUpperLeg", "RightLowerLeg"}
         }
-        
-        for _, pair in pairs(bones) do
-            local line = Drawing.new("Line")
-            line.Thickness = 1
-            line.Color = Color3.new(1,1,1)
-            line.Visible = false
-            table.insert(objects.Skeleton, {line, pair[1], pair[2]})
+        for _, b in pairs(bones) do
+            local l = Drawing.new("Line")
+            l.Thickness = 1
+            l.Color = Color3.new(1,1,1)
+            table.insert(o.Skeleton, {l, b[1], b[2]})
         end
-
-        local joint_parts = {"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm", "LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg"}
-        for _, p in pairs(joint_parts) do
-            local circ = Drawing.new("Circle")
-            circ.Radius = 2
-            circ.Filled = true
-            circ.Color = Color3.new(1,1,1)
-            circ.Visible = false
-            table.insert(objects.Joints, {circ, p})
-        end
-        
-        ESPObjects[player] = objects
+        ESPRenderer.Cache[player] = o
     end
-    
-    player.CharacterAdded:Connect(function() task.wait(0.5) create() end)
-    if player.Character then create() end
+    return ESPRenderer.Cache[player]
 end
 
--- Central Loop
-table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
+function ESPRenderer.Clear(player)
+    local o = ESPRenderer.Cache[player]
+    if o then
+        for _, obj in pairs(o) do
+            if typeof(obj) == "table" then
+                for _, sub in pairs(obj) do 
+                    if typeof(sub) == "table" and sub[1] and typeof(sub[1]) == "userdata" then
+                        pcall(function() sub[1]:Remove() end)
+                    end 
+                end
+            elseif typeof(obj) == "userdata" then
+                pcall(function() obj:Remove() end)
+            end
+        end
+        ESPRenderer.Cache[player] = nil
+    end
+end
+
+function ESPRenderer.Update()
     local myTeam = LocalPlayer.Team
     local mousePos = UserInputService:GetMouseLocation()
-    
-    local aimTarget = nil
-    local shortestAimDist = math.huge
-    local silentTarget = nil
-    local shortestSilentDist = math.huge
+    local aimTarget, silentTarget = nil, nil
+    local shortestAimDist, shortestSilentDist = Settings.Aimbot.FOV, Settings.Rage.FOV
 
-    -- Update FOV Circles
-    AimbotCircle.Position = mousePos
-    AimbotCircle.Radius = Settings.Aimbot.FOV
-    AimbotCircle.Visible = Settings.Aimbot.Enabled and Settings.Aimbot.ShowFOV
-    AimbotCircle.Color = Settings.Aimbot.FOVColor
+    -- Garbage Collection
+    for p, _ in pairs(ESPRenderer.Cache) do
+        if not p or not p.Parent or not p:IsDescendantOf(Players) then ESPRenderer.Clear(p) end
+    end
 
-    SilentCircle.Position = mousePos
-    SilentCircle.Radius = Settings.Rage.FOV
-    SilentCircle.Visible = Settings.Rage.SilentAim and Settings.Rage.ShowFOV
-    SilentCircle.Color = Settings.Rage.FOVColor
-
-    for player, objects in pairs(ESPObjects) do
+    for _, player in pairs(Players:GetPlayers()) do
+        local o = ESPRenderer.Get(player)
         local char = player.Character
-        if char and player ~= LocalPlayer then
+        local head = GetCharacterPart(player, "Head")
+        local root = GetCharacterPart(player, "HumanoidRootPart")
+        local hum = char and char:FindFirstChildOfClass("Humanoid")
+
+        if char and head and root and hum and hum.Health > 0 and player ~= LocalPlayer then
             local isTeammate = player.Team and myTeam and player.Team == myTeam
-            local isVisible = not (Settings.Visuals.TeamCheck and isTeammate)
-            local hum = char:FindFirstChildOfClass("Humanoid")
-            local head = GetCharacterPart(player, "Head")
-            local root = GetCharacterPart(player, "HumanoidRootPart")
-            
-            local function hideAll()
-                for _, obj in pairs(objects) do
-                    if typeof(obj) == "table" then
-                        for _, sub in pairs(obj) do 
-                            if typeof(sub) == "table" then sub[1].Visible = false else sub.Visible = false end 
-                        end
-                    elseif obj.Visible ~= nil then obj.Visible = false end
-                end
-            end
-
-            if head and root and hum and isVisible and hum.Health > 0 then
-                local headPos, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
-                local footPos = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
-                local spectating = (Camera.CameraSubject and Camera.CameraSubject:IsDescendantOf(char))
-
-                if onScreen and not spectating then
-                    local height = math.abs(headPos.Y - footPos.Y)
-                    local width = height / 2
-                    local position = Vector2.new(headPos.X - width/2, headPos.Y)
+            if not (Settings.Visuals.TeamCheck and isTeammate) then
+                local headV, onScreen = Camera:WorldToViewportPoint(head.Position + Vector3.new(0, 0.5, 0))
+                
+                if onScreen then
+                    local footV = Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0))
+                    local rootV = Camera:WorldToViewportPoint(root.Position)
                     
-                    -- Corners
-                    if Settings.Visuals.BoxESP then
-                        local l = height/4
-                        local c = objects.Corners
-                        -- Top Left
-                        c[1].Visible, c[1].From, c[1].To = true, position, position + Vector2.new(l, 0)
-                        c[2].Visible, c[2].From, c[2].To = true, position, position + Vector2.new(0, l)
-                        -- Top Right
-                        c[3].Visible, c[3].From, c[3].To = true, position + Vector2.new(width, 0), position + Vector2.new(width - l, 0)
-                        c[4].Visible, c[4].From, c[4].To = true, position + Vector2.new(width, 0), position + Vector2.new(width, l)
-                        -- Bottom Left
-                        c[5].Visible, c[5].From, c[5].To = true, position + Vector2.new(0, height), position + Vector2.new(l, height)
-                        c[6].Visible, c[6].From, c[6].To = true, position + Vector2.new(0, height), position + Vector2.new(0, height - l)
-                        -- Bottom Right
-                        c[7].Visible, c[7].From, c[7].To = true, position + Vector2.new(width, height), position + Vector2.new(width - l, height)
-                        c[8].Visible, c[8].From, c[8].To = true, position + Vector2.new(width, height), position + Vector2.new(width, height - l)
-                        for i=1,8 do c[i].Color = Settings.Visuals.Color end
-                    else
-                        for i=1,8 do objects.Corners[i].Visible = false end
+                    local rawHeight = math.abs(headV.Y - footV.Y)
+                    local rawWidth = rawHeight / 1.5
+                    local rawPos = Vector2.new(rootV.X - rawWidth/2, headV.Y)
+
+                    -- Liquid Smoothing (Lerp)
+                    if o.LastPos == Vector2.new(0, 0) then
+                        o.LastPos, o.LastSize = rawPos, Vector2.new(rawWidth, rawHeight)
                     end
-
-                    -- Name
-                    objects.Name.Visible = Settings.Visuals.BoxESP
-                    objects.Name.Text = player.Name:lower()
-                    objects.Name.Position = Vector2.new(position.X + width/2, position.Y - 15)
                     
+                    o.LastPos = o.LastPos:Lerp(rawPos, ESPRenderer.Interpolation)
+                    o.LastSize = o.LastSize:Lerp(Vector2.new(rawWidth, rawHeight), ESPRenderer.Interpolation)
+                    
+                    local pos, size = o.LastPos, o.LastSize
+
+                    -- Box
+                    o.Box.Visible = Settings.Visuals.BoxESP
+                    o.Box.Size, o.Box.Position = size, pos
+                    o.Box.Color = Settings.Visuals.Color
+                    o.BoxOutline.Visible = Settings.Visuals.BoxESP
+                    o.BoxOutline.Size, o.BoxOutline.Position = size, pos
+
+                    -- Text
+                    o.Name.Visible = Settings.Visuals.BoxESP
+                    o.Name.Text, o.Name.Position = player.Name:lower(), Vector2.new(pos.X + size.X/2, pos.Y - 15)
+
                     -- Health
                     if Settings.Visuals.HealthBar then
-                        local hp = math.clamp(hum.Health, 0, hum.MaxHealth)
-                        local hpPercent = hp / hum.MaxHealth
-                        local barPos = position.X - 6
-                        objects.HealthBarBG.Visible = true
-                        objects.HealthBarBG.Size = Vector2.new(4, height + 2)
-                        objects.HealthBarBG.Position = Vector2.new(barPos - 1, position.Y - 1)
-                        objects.HealthBar.Visible = true
-                        objects.HealthBar.Size = Vector2.new(2, height * hpPercent)
-                        objects.HealthBar.Position = Vector2.new(barPos, position.Y + (height * (1 - hpPercent)))
-                        objects.HealthBar.Color = Color3.fromHSV(hpPercent * 0.3, 1, 1)
-                        if hp < hum.MaxHealth then
-                            objects.HealthNum.Visible = true
-                            objects.HealthNum.Text = tostring(math.floor(hp))
-                            objects.HealthNum.Position = Vector2.new(barPos - 1, position.Y + (height * (1 - hpPercent)) - 7)
-                        else objects.HealthNum.Visible = false end
-                    else
-                        objects.HealthBarBG.Visible, objects.HealthBar.Visible, objects.HealthNum.Visible = false, false, false
-                    end
+                        local hpP = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                        o.HealthBG.Visible, o.HealthBG.Size, o.HealthBG.Position = true, Vector2.new(4, size.Y + 2), Vector2.new(pos.X - 6, pos.Y - 1)
+                        o.HealthBar.Visible, o.HealthBar.Size, o.HealthBar.Position = true, Vector2.new(2, size.Y * hpP), Vector2.new(pos.X - 5, pos.Y + (size.Y * (1 - hpP)))
+                        o.HealthBar.Color = Color3.fromHSV(hpP * 0.3, 1, 1)
+                        if hpP < 1 then
+                            o.HealthNum.Visible, o.HealthNum.Text, o.HealthNum.Position = true, tostring(math.floor(hum.Health)), Vector2.new(pos.X - 8, pos.Y + (size.Y * (1 - hpP)) - 2)
+                        else o.HealthNum.Visible = false end
+                    else o.HealthBG.Visible, o.HealthBar.Visible, o.HealthNum.Visible = false, false, false end
 
                     -- Weapon
                     if Settings.Visuals.WeaponESP then
                         local tool = char:FindFirstChildOfClass("Tool")
-                        local weapon = tool and tool.Name or "none"
-                        objects.Weapon.Visible = true
-                        objects.Weapon.Text = weapon:lower()
-                        objects.Weapon.Position = Vector2.new(position.X + width/2, position.Y + height + 5)
-                    else objects.Weapon.Visible = false end
+                        o.Weapon.Visible, o.Weapon.Text, o.Weapon.Position = true, tool and tool.Name:lower() or "none", Vector2.new(pos.X + size.X/2, pos.Y + size.Y + 2)
+                    else o.Weapon.Visible = false end
 
-                    -- Skeleton & Joints
+                    -- Skeleton
                     if Settings.Visuals.SkeletonESP then
-                        for _, data in pairs(objects.Skeleton) do
-                            local p1, p2 = GetCharacterPart(player, data[2]), GetCharacterPart(player, data[3])
+                        for _, b in pairs(o.Skeleton) do
+                            local p1, p2 = char:FindFirstChild(b[2]), char:FindFirstChild(b[3])
                             if p1 and p2 then
                                 local v1, os1 = Camera:WorldToViewportPoint(p1.Position)
                                 local v2, os2 = Camera:WorldToViewportPoint(p2.Position)
                                 if os1 and os2 then
-                                    data[1].Visible, data[1].From, data[1].To = true, Vector2.new(v1.X, v1.Y), Vector2.new(v2.X, v2.Y)
-                                else data[1].Visible = false end
-                            else data[1].Visible = false end
+                                    b[1].Visible, b[1].From, b[1].To = true, Vector2.new(v1.X, v1.Y), Vector2.new(v2.X, v2.Y)
+                                else b[1].Visible = false end
+                            else b[1].Visible = false end
                         end
-                        for _, j in pairs(objects.Joints) do
-                            local p = GetCharacterPart(player, j[2])
-                            if p then
-                                local v, os = Camera:WorldToViewportPoint(p.Position)
-                                if os then j[1].Visible, j[1].Position = true, Vector2.new(v.X, v.Y)
-                                else j[1].Visible = false end
-                            else j[1].Visible = false end
-                        end
-                    else
-                        for _, d in pairs(objects.Skeleton) do d[1].Visible = false end
-                    local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
-                    
-                    -- Legit Aimbot Target
-                    if Settings.Aimbot.Enabled and dist < Settings.Aimbot.FOV and dist < shortestAimDist then
-                        if not (Settings.Aimbot.TeamCheck and isTeammate) then
-                            local part = GetCharacterPart(player, Settings.Aimbot.AimPart)
-                            local vis = true
-                            if Settings.Aimbot.VisibleCheck then
-                                local res = workspace:Raycast(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position).Unit * 1000, RaycastParams.new())
-                                if res and not res.Instance:IsDescendantOf(char) then vis = false end
-                            end
-                            if vis then aimTarget, shortestAimDist = part, dist end
-                        end
-                    end
+                    else for _, b in pairs(o.Skeleton) do b[1].Visible = false end end
 
-                    -- Silent Aim Target
-                    if Settings.Rage.SilentAim and dist < Settings.Rage.FOV and dist < shortestSilentDist then
-                        if not (Settings.Rage.TeamCheck and isTeammate) then
-                            local part = GetCharacterPart(player, Settings.Rage.AimPart)
-                            local vis = true
-                            if Settings.Rage.VisibleCheck then
-                                local res = workspace:Raycast(Camera.CFrame.Position, (part.Position - Camera.CFrame.Position).Unit * 1000, RaycastParams.new())
-                                if res and not res.Instance:IsDescendantOf(char) then vis = false end
-                            end
-                            if vis then silentTarget, shortestSilentDist = part, dist end
-                        end
-                    end
+                    -- Target Detection
+                    local dist = (Vector2.new(headV.X, headV.Y) - mousePos).Magnitude
+                    if Settings.Aimbot.Enabled and dist < shortestAimDist then aimTarget, shortestAimDist = head, dist end
+                    if Settings.Rage.SilentAim and dist < shortestSilentDist then silentTarget, shortestSilentDist = head, dist end
+                else
+                    ESPRenderer.Hide(o)
                 end
-            end
-        end
+            else ESPRenderer.Hide(o) end
+        else ESPRenderer.Hide(o) end
     end
+    
+    SilentTarget = silentTarget
+    return aimTarget
+end
+
+function ESPRenderer.Hide(o)
+    o.Box.Visible = false
+    o.BoxOutline.Visible = false
+    o.Name.Visible = false
+    o.Weapon.Visible = false
+    o.HealthBG.Visible = false
+    o.HealthBar.Visible = false
+    o.HealthNum.Visible = false
+    for _, b in pairs(o.Skeleton) do b[1].Visible = false end
+end
+
+-- Central Loop
+table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
+    local mousePos = UserInputService:GetMouseLocation()
+    local aimTarget = ESPRenderer.Update()
 
     SilentTarget = silentTarget
 
     -- Apply Aimbot
     if aimTarget then
         local bind = Settings.Aimbot.KeyBind
-        local isAiming = (bind.Name:find("MouseButton") and UserInputService:IsMouseButtonPressed(bind)) or UserInputService:IsKeyDown(bind)
+        local isAiming = false
+        if typeof(bind) == "EnumItem" then
+            if bind.EnumType == Enum.KeyCode then
+                isAiming = UserInputService:IsKeyDown(bind)
+            elseif bind.EnumType == Enum.UserInputType then
+                isAiming = UserInputService:IsMouseButtonPressed(bind)
+            end
+        end
+        
         if isAiming then
             local targetPos = Camera:WorldToViewportPoint(aimTarget.Position)
             local mousemove = (mousemoverel or (getgenv and getgenv().mousemoverel))
@@ -909,23 +855,11 @@ table.insert(Library.Connections, RunService.Stepped:Connect(function()
     end
 end))
 
-Players.PlayerAdded:Connect(CreatePlayerESP)
 Players.PlayerRemoving:Connect(function(player)
-    if ESPObjects[player] then
-        local o = ESPObjects[player]
-        if o.Box then o.Box:Remove() end
-        if o.BoxOutline then o.BoxOutline:Remove() end
-        if o.Name then o.Name:Remove() end
-        if o.Weapon then o.Weapon:Remove() end
-        if o.HealthBarBG then o.HealthBarBG:Remove() end
-        if o.HealthBar then o.HealthBar:Remove() end
-        if o.ArmorBarBG then o.ArmorBarBG:Remove() end
-        if o.ArmorBar then o.ArmorBar:Remove() end
-        if o.Skeleton then for _, l in pairs(o.Skeleton) do if l[1] then l[1]:Remove() end end end
-        ESPObjects[player] = nil
-    end
+    ESPRenderer.Clear(player)
 end)
-for _, p in pairs(Players:GetPlayers()) do CreatePlayerESP(p) end
+
+for _, p in pairs(Players:GetPlayers()) do ESPRenderer.Get(p) end
 
 -- Final Execution
 local Win = Library:CreateWindow("SKEET.CC")
@@ -940,6 +874,7 @@ SilentGroup:CreateCheckBox("enabled", "Rage_SilentAim", function(v) Settings.Rag
 SilentGroup:CreateCheckBox("team check", "Rage_TeamCheck", function(v) Settings.Rage.TeamCheck = v end)
 SilentGroup:CreateCheckBox("visible check", "Rage_VisibleCheck", function(v) Settings.Rage.VisibleCheck = v end)
 SilentGroup:CreateCheckBox("show fov", "Rage_ShowFOV", function(v) Settings.Rage.ShowFOV = v end)
+SilentGroup:CreateDropdown("target part", {"Head", "HumanoidRootPart", "UpperTorso"}, function(v) Settings.Rage.AimPart = v end)
 SilentGroup:CreateSlider("fov radius", "Rage_FOV", 0, 800, 150, function(v) Settings.Rage.FOV = v end)
 
 local AAGroup = RageTab:CreateGroupBox("anti-aim", "right")
@@ -951,6 +886,7 @@ AimbotGroup:CreateCheckBox("enabled", "Aimbot_Enabled", function(v) Settings.Aim
 AimbotGroup:CreateCheckBox("team check", "Aimbot_TeamCheck", function(v) Settings.Aimbot.TeamCheck = v end)
 AimbotGroup:CreateCheckBox("visible check", "Aimbot_VisibleCheck", function(v) Settings.Aimbot.VisibleCheck = v end)
 AimbotGroup:CreateCheckBox("show fov", "Aimbot_ShowFOV", function(v) Settings.Aimbot.ShowFOV = v end)
+AimbotGroup:CreateDropdown("target part", {"Head", "HumanoidRootPart", "UpperTorso"}, function(v) Settings.Aimbot.AimPart = v end)
 AimbotGroup:CreateKeyBind("aim key", "Aimbot_KeyBind", Settings.Aimbot.KeyBind, function(k) Settings.Aimbot.KeyBind = k end)
 AimbotGroup:CreateSlider("fov radius", "Aimbot_FOV", 0, 800, 150, function(v) Settings.Aimbot.FOV = v end)
 AimbotGroup:CreateSlider("smoothing", "Aimbot_Smoothing", 1, 20, 3, function(v) Settings.Aimbot.Smoothing = v end)
@@ -967,6 +903,14 @@ ESPGroup:CreateCheckBox("team check", "Visuals_TeamCheck", function(v) Settings.
 local MovementGroup = MiscTab:CreateGroupBox("movement", "left")
 MovementGroup:CreateCheckBox("bunnyhop", "Misc_Bunnyhop", function(v) Settings.Misc.Bunnyhop = v end)
 
+local ESPCleanerGroup = MiscTab:CreateGroupBox("esp cleaner", "right")
+ESPCleanerGroup:CreateButton("force clear esp", function()
+    for p, _ in pairs(ESPRenderer.Cache) do
+        ESPRenderer.Clear(p)
+    end
+    for _, p in pairs(Players:GetPlayers()) do ESPRenderer.Get(p) end
+end)
+
 local TPGroup = MiscTab:CreateGroupBox("third person", "right")
 TPGroup:CreateCheckBox("enabled", "Misc_ThirdPerson", function(v) Settings.Misc.ThirdPerson = v end)
 TPGroup:CreateKeyBind("toggle key", "Misc_TPKey", Settings.Misc.TPKey, function(k) Settings.Misc.TPKey = k end)
@@ -979,6 +923,6 @@ local ConfigDrop = ConfigSelectGroup:CreateDropdown("select config", GetConfigs(
 local ConfigActionGroup = SettingsTab:CreateGroupBox("actions", "right")
 ConfigActionGroup:CreateButton("save config", function() SaveConfig(SelectedConfig) end)
 ConfigActionGroup:CreateButton("load config", function() LoadConfig(SelectedConfig) end)
-ConfigActionGroup:CreateButton("refresh list", function() ConfigDrop:Update(GetConfigs()) end)
+ConfigActionGroup:CreateButton("refresh list", function() ConfigDrop.Update(GetConfigs()) end)
 
 return Library
