@@ -38,17 +38,6 @@ local Settings = {
         ShowFOV = true,
         FOVColor = Color3.fromRGB(255, 255, 255)
     },
-    Rage = {
-        SilentAim = false,
-        AimPart = "Head",
-        FOV = 150,
-        TeamCheck = true,
-        VisibleCheck = false,
-        ShowFOV = true,
-        FOVColor = Color3.fromRGB(255, 0, 0),
-        AntiAim = false,
-        SpinSpeed = 50
-    },
     Visuals = {
         BoxESP = false,
         SkeletonESP = false,
@@ -58,10 +47,10 @@ local Settings = {
         Color = Color3.fromRGB(0, 255, 150)
     },
     Misc = {
-        Bunnyhop = false,
-        ThirdPerson = false,
         TPKey = Enum.KeyCode.V,
-        TPDistance = 15
+        ThirdPerson = false,
+        TPDistance = 10,
+        Bunnyhop = false
     }
 }
 
@@ -71,18 +60,12 @@ ESPFolder.Name = "Skeet_ESP"
 local ESPObjects = {}
 local PartCache = {}
 local Camera = workspace.CurrentCamera
-local SilentTarget = nil
 
 -- FOV Circles
 local AimbotCircle = Drawing.new("Circle")
 AimbotCircle.Thickness = 1
 AimbotCircle.Transparency = 1
 AimbotCircle.Visible = false
-
-local SilentCircle = Drawing.new("Circle")
-SilentCircle.Thickness = 1
-SilentCircle.Transparency = 1
-SilentCircle.Visible = false
 
 -- Helper Functions
 local function MakeDraggable(frame)
@@ -144,68 +127,10 @@ function Library:Unload()
     if self.Watermark then self.Watermark:Destroy() end
     if ESPFolder then pcall(function() ESPFolder:Destroy() end) end
     pcall(function() AimbotCircle:Remove() end)
-    pcall(function() SilentCircle:Remove() end)
     table.clear(ESPObjects)
 end
 
--- Silent Aim Hook
-local function GetSilentTarget()
-    local target = nil
-    local shortestDist = Settings.Rage.FOV
-    local mousePos = UserInputService:GetMouseLocation()
-    
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer then
-            local char = player.Character
-            local head = char and char:FindFirstChild("Head")
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            if head and hum and hum.Health > 0 then
-                local isTeammate = player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team
-                if not (Settings.Rage.TeamCheck and isTeammate) then
-                    local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
-                    if onScreen then
-                        local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
-                        if dist < shortestDist then
-                            target = head
-                            shortestDist = dist
-                        end
-                    end
-                end
-            end
-        end
-    end
-    return target
-end
-
-local hook = (hookmetamethod or (getgenv and getgenv().hookmetamethod))
-if hook then
-    local oldNamecall
-    oldNamecall = hook(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        if not checkcaller() and Settings.Rage.SilentAim then
-            local target = GetSilentTarget()
-            if target then
-                if method == "Raycast" then
-                    local origin = args[1]
-                    args[2] = (target.Position - origin).Unit * 1000
-                    return oldNamecall(self, unpack(args))
-                elseif method == "FindPartOnRayWithIgnoreList" or method == "FindPartOnRay" then
-                    local ray = args[1]
-                    args[1] = Ray.new(ray.Origin, (target.Position - ray.Origin).Unit * 1000)
-                    return oldNamecall(self, unpack(args))
-                elseif method == "FireServer" and (tostring(self):lower():find("shoot") or tostring(self):lower():find("fire")) then
-                    for i, arg in pairs(args) do
-                        if typeof(arg) == "Vector3" then args[i] = target.Position
-                        elseif typeof(arg) == "CFrame" then args[i] = target.CFrame end
-                    end
-                    return oldNamecall(self, unpack(args))
-                end
-            end
-        end
-        return oldNamecall(self, ...)
-    end)
-end
+-- Removed Rage Hooks
 
 function Library:CreateWindow(title)
     local ScreenGui = Instance.new("ScreenGui")
@@ -689,8 +614,8 @@ end
 function ESPRenderer.Update()
     local myTeam = LocalPlayer.Team
     local mousePos = UserInputService:GetMouseLocation()
-    local aimTarget, silentTarget = nil, nil
-    local shortestAimDist, shortestSilentDist = Settings.Aimbot.FOV, Settings.Rage.FOV
+    local aimTarget = nil
+    local shortestAimDist = Settings.Aimbot.FOV
 
     -- Garbage Collection
     for p, _ in pairs(ESPRenderer.Cache) do
@@ -772,7 +697,6 @@ function ESPRenderer.Update()
                     -- Target Detection
                     local dist = (Vector2.new(headV.X, headV.Y) - mousePos).Magnitude
                     if Settings.Aimbot.Enabled and dist < shortestAimDist then aimTarget, shortestAimDist = head, dist end
-                    if Settings.Rage.SilentAim and dist < shortestSilentDist then silentTarget, shortestSilentDist = head, dist end
                 else
                     ESPRenderer.Hide(o)
                 end
@@ -780,7 +704,6 @@ function ESPRenderer.Update()
         else ESPRenderer.Hide(o) end
     end
     
-    SilentTarget = silentTarget
     return aimTarget
 end
 
@@ -799,8 +722,6 @@ end
 table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
     local mousePos = UserInputService:GetMouseLocation()
     local aimTarget = ESPRenderer.Update()
-
-    SilentTarget = silentTarget
 
     -- Apply Aimbot
     if aimTarget then
@@ -825,17 +746,16 @@ table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
         end
     end
 
-    -- Anti-Aim
-    if Settings.Rage.AntiAim then
-        local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(Settings.Rage.SpinSpeed), 0) end
-    end
+    -- Removed Rage Logic
+end))
 
-    -- Third Person (Force CameraMode)
+-- Third Person Fix
+table.insert(Library.Connections, RunService.RenderStepped:Connect(function()
     if Settings.Misc.ThirdPerson then
         LocalPlayer.CameraMode = Enum.CameraMode.Classic
         LocalPlayer.CameraMaxZoomDistance = Settings.Misc.TPDistance
         LocalPlayer.CameraMinZoomDistance = Settings.Misc.TPDistance
+        Camera.FieldOfView = 90
     else
         LocalPlayer.CameraMaxZoomDistance = 12.5
         LocalPlayer.CameraMinZoomDistance = 0.5
@@ -855,6 +775,8 @@ table.insert(Library.Connections, RunService.Stepped:Connect(function()
     end
 end))
 
+-- Removed Weapon Mod Heartbeat Loop
+
 Players.PlayerRemoving:Connect(function(player)
     ESPRenderer.Clear(player)
 end)
@@ -863,33 +785,21 @@ for _, p in pairs(Players:GetPlayers()) do ESPRenderer.Get(p) end
 
 -- Final Execution
 local Win = Library:CreateWindow("SKEET.CC")
-local RageTab = Win:CreateTab("Ragebot")
+local AimbotTab = Win:CreateTab("Aimbot")
 local VisualsTab = Win:CreateTab("Visuals")
 local MiscTab = Win:CreateTab("Misc")
 local SettingsTab = Win:CreateTab("Settings")
 
--- Rage Tab
-local SilentGroup = RageTab:CreateGroupBox("silent aim", "left")
-SilentGroup:CreateCheckBox("enabled", "Rage_SilentAim", function(v) Settings.Rage.SilentAim = v end)
-SilentGroup:CreateCheckBox("team check", "Rage_TeamCheck", function(v) Settings.Rage.TeamCheck = v end)
-SilentGroup:CreateCheckBox("visible check", "Rage_VisibleCheck", function(v) Settings.Rage.VisibleCheck = v end)
-SilentGroup:CreateCheckBox("show fov", "Rage_ShowFOV", function(v) Settings.Rage.ShowFOV = v end)
-SilentGroup:CreateDropdown("target part", {"Head", "HumanoidRootPart", "UpperTorso"}, function(v) Settings.Rage.AimPart = v end)
-SilentGroup:CreateSlider("fov radius", "Rage_FOV", 0, 800, 150, function(v) Settings.Rage.FOV = v end)
-
-local AAGroup = RageTab:CreateGroupBox("anti-aim", "right")
-AAGroup:CreateCheckBox("enabled", "Rage_AntiAim", function(v) Settings.Rage.AntiAim = v end)
-AAGroup:CreateSlider("spin speed", "Rage_SpinSpeed", 0, 100, 50, function(v) Settings.Rage.SpinSpeed = v end)
-
-local AimbotGroup = RageTab:CreateGroupBox("legit aimbot", "left")
+-- Aimbot Tab
+local AimbotGroup = AimbotTab:CreateGroupBox("aimbot", "left")
 AimbotGroup:CreateCheckBox("enabled", "Aimbot_Enabled", function(v) Settings.Aimbot.Enabled = v end)
 AimbotGroup:CreateCheckBox("team check", "Aimbot_TeamCheck", function(v) Settings.Aimbot.TeamCheck = v end)
 AimbotGroup:CreateCheckBox("visible check", "Aimbot_VisibleCheck", function(v) Settings.Aimbot.VisibleCheck = v end)
 AimbotGroup:CreateCheckBox("show fov", "Aimbot_ShowFOV", function(v) Settings.Aimbot.ShowFOV = v end)
 AimbotGroup:CreateDropdown("target part", {"Head", "HumanoidRootPart", "UpperTorso"}, function(v) Settings.Aimbot.AimPart = v end)
-AimbotGroup:CreateKeyBind("aim key", "Aimbot_KeyBind", Settings.Aimbot.KeyBind, function(k) Settings.Aimbot.KeyBind = k end)
 AimbotGroup:CreateSlider("fov radius", "Aimbot_FOV", 0, 800, 150, function(v) Settings.Aimbot.FOV = v end)
 AimbotGroup:CreateSlider("smoothing", "Aimbot_Smoothing", 1, 20, 3, function(v) Settings.Aimbot.Smoothing = v end)
+AimbotGroup:CreateKeyBind("aim key", "Aimbot_Key", Enum.KeyCode.E, function(v) Settings.Aimbot.KeyBind = v end)
 
 -- Visuals Tab
 local ESPGroup = VisualsTab:CreateGroupBox("esp", "left")
@@ -901,7 +811,9 @@ ESPGroup:CreateCheckBox("team check", "Visuals_TeamCheck", function(v) Settings.
 
 -- Misc Tab
 local MovementGroup = MiscTab:CreateGroupBox("movement", "left")
-MovementGroup:CreateCheckBox("bunnyhop", "Misc_Bunnyhop", function(v) Settings.Misc.Bunnyhop = v end)
+MovementGroup:CreateCheckBox("bunnyhop", "Misc_Bhop", function(v) Settings.Misc.Bunnyhop = v end)
+MovementGroup:CreateCheckBox("third person", "Misc_TP", function(v) Settings.Misc.ThirdPerson = v end)
+MovementGroup:CreateSlider("tp distance", "Misc_TPDist", 1, 50, 10, function(v) Settings.Misc.TPDistance = v end)
 
 local ESPCleanerGroup = MiscTab:CreateGroupBox("esp cleaner", "right")
 ESPCleanerGroup:CreateButton("force clear esp", function()
