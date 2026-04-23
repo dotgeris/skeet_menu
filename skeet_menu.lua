@@ -141,7 +141,8 @@ function Library:Unload()
     SilentCircle:Remove()
 end
 
--- Silent Aim & Mouse Redirection
+-- Silent Aim & Mouse Redirection (DISABLED FOR MAINTENANCE)
+--[[
 local hook = (hookmetamethod or (getgenv and getgenv().hookmetamethod))
 if hook then
     local oldNamecall
@@ -182,6 +183,7 @@ if hook then
         return oldIndex(self, index)
     end)
 end
+]]
 
 function Library:CreateWindow(title)
     local ScreenGui = Instance.new("ScreenGui")
